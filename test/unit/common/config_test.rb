@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+require File.expand_path("../../base", __FILE__)
+
 require "vagrant-google/config"
 
 describe VagrantPlugins::Google::Config do
@@ -20,25 +22,29 @@ describe VagrantPlugins::Google::Config do
   before :each do
     ENV.stub(:[] => nil)
   end
-  
+
   describe "defaults" do
     subject do
       instance.tap do |o|
         o.finalize!
       end
     end
-    t = Time.now
 
-    its("name")              { should == "i-#{t.year}#{t.month.to_s.rjust(2,'0')}#{t.day.to_s.rjust(2,'0')}#{t.hour.to_s.rjust(2,'0')}" }
-    its("image")             { should == "debian-7-wheezy-v20150127" }
-    its("zone")              { should == "us-central1-f" }
-    its("network")           { should == "default" }
-    its("machine_type")      { should == "n1-standard-1" }
-    its("disk_size")         { should == 10 }
-    its("disk_name")         { should be_nil }
+    its("name")                   { should match "i-[0-9]{10}-[0-9a-f]{4}" }
+    its("image")                  { should == "debian-7-wheezy-v20150127" }
+    its("zone")                   { should == "us-central1-f" }
+    its("network")                { should == "default" }
+    its("machine_type")           { should == "n1-standard-1" }
+    its("disk_size")              { should == 10 }
+    its("disk_name")              { should be_nil }
+    its("disk_type")              { should == "pd-standard" }
     its("instance_ready_timeout") { should == 20 }
-    its("metadata")          { should == {} }
-    its("tags")              { should == [] }
+    its("metadata")               { should == {} }
+    its("tags")                   { should == [] }
+    its("service_accounts")       { should == nil }
+    its("preemptible")            { should be_false }
+    its("auto_restart")           { should }
+    its("on_host_maintenance")    { should == "MIGRATE" }
   end
 
   describe "overriding defaults" do
@@ -46,14 +52,32 @@ describe VagrantPlugins::Google::Config do
     # simple boilerplate test, so I cut corners here. It just sets
     # each of these attributes to "foo" in isolation, and reads the value
     # and asserts the proper result comes back out.
-    [:name, :image, :zone, :instance_ready_timeout, :machine_type, :disk_size, :disk_name,
-      :network, :metadata, :can_ip_forward, :external_ip, :autodelete_disk].each do |attribute|
+    [:name, :image, :zone, :instance_ready_timeout, :machine_type, :disk_size, :disk_name, :disk_type,
+     :network, :metadata, :can_ip_forward, :external_ip, :autodelete_disk].each do |attribute|
 
       it "should not default #{attribute} if overridden" do
         instance.send("#{attribute}=".to_sym, "foo")
         instance.finalize!
         instance.send(attribute).should == "foo"
       end
+    end
+
+    it "should raise error when preemptible and auto_restart is true" do
+      instance.preemptible = true
+      instance.auto_restart = true
+      expected_error = "en.vagrant_google.config.auto_restart_invalid_on_preemptible"
+      instance.finalize!
+      errors = instance.validate("foo")["Google Provider"]
+      errors.inject(false) { |a, e| a or e.include?(expected_error) }.should == true
+    end
+
+    it "should raise error when preemptible and on_host_maintenance is not TERMINATE" do
+      instance.preemptible = true
+      instance.on_host_maintenance = "MIGRATE"
+      expected_error = "en.vagrant_google.config.on_host_maintenance_invalid_on_preemptible"
+      instance.finalize!
+      errors = instance.validate("foo")["Google Provider"]
+      errors.inject(false) { |a, e| a or e.include?(expected_error) }.should == true
     end
   end
 
@@ -67,12 +91,14 @@ describe VagrantPlugins::Google::Config do
 
       its("google_client_email") { should be_nil }
       its("google_key_location") { should be_nil }
+      its("google_json_key_location") { should be_nil }
     end
 
     context "with Google credential environment variables" do
       before :each do
         ENV.stub(:[]).with("GOOGLE_CLIENT_EMAIL").and_return("client_id_email")
         ENV.stub(:[]).with("GOOGLE_KEY_LOCATION").and_return("/path/to/key")
+        ENV.stub(:[]).with("GOOGLE_JSON_KEY_LOCATION").and_return("/path/to/json/key")
       end
 
       subject do
@@ -83,6 +109,31 @@ describe VagrantPlugins::Google::Config do
 
       its("google_client_email") { should == "client_id_email" }
       its("google_key_location") { should == "/path/to/key" }
+      its("google_json_key_location") { should == "/path/to/json/key" }
+    end
+
+    context "With both Google credential environment variables" do
+      before :each do
+        ENV.stub(:[]).with("GOOGLE_CLIENT_EMAIL").and_return("client_id_email")
+        ENV.stub(:[]).with("GOOGLE_KEY_LOCATION").and_return("/path/to/key")
+        ENV.stub(:[]).with("GOOGLE_JSON_KEY_LOCATION").and_return("/path/to/json/key")
+      end
+
+      it "Should return duplicate key location errors" do
+        instance.finalize!
+        expect(instance.validate("foo")["Google Provider"][1]).to include("en.vagrant_google.config.google_duplicate_key_location")
+      end
+    end
+
+    context "With none of the Google credential environment variables set" do
+      before :each do
+        ENV.stub(:[]).with("GOOGLE_CLIENT_EMAIL").and_return("client_id_email")
+      end
+
+      it "Should return no key set errors" do
+        instance.finalize!
+        expect(instance.validate("foo")["Google Provider"][1]).to include("en.vagrant_google.config.google_key_location_required")
+      end
     end
   end
 
@@ -91,6 +142,7 @@ describe VagrantPlugins::Google::Config do
     let(:config_machine_type)    { "foo" }
     let(:config_disk_size)       { 99 }
     let(:config_disk_name)       { "foo" }
+    let(:config_disk_type)       { "foo" }
     let(:config_name)            { "foo" }
     let(:config_zone)            { "foo" }
     let(:config_network)         { "foo" }
@@ -104,6 +156,7 @@ describe VagrantPlugins::Google::Config do
       instance.machine_type      = config_machine_type
       instance.disk_size         = config_disk_size
       instance.disk_name         = config_disk_name
+      instance.disk_type         = config_disk_type
       instance.zone              = config_zone
       instance.can_ip_forward    = can_ip_forward
       instance.external_ip       = external_ip
@@ -131,6 +184,7 @@ describe VagrantPlugins::Google::Config do
       its("machine_type")      { should == config_machine_type }
       its("disk_size")         { should == config_disk_size }
       its("disk_name")         { should == config_disk_name }
+      its("disk_type")         { should == config_disk_type }
       its("network")           { should == config_network }
       its("zone")              { should == config_zone }
       its("can_ip_forward")    { should == can_ip_forward }
@@ -158,6 +212,7 @@ describe VagrantPlugins::Google::Config do
       its("machine_type")      { should == config_machine_type }
       its("disk_size")         { should == config_disk_size }
       its("disk_name")         { should == config_disk_name }
+      its("disk_type")         { should == config_disk_type }
       its("network")           { should == config_network }
       its("zone")              { should == zone_name }
       its("can_ip_forward")    { should == can_ip_forward }
@@ -208,6 +263,34 @@ describe VagrantPlugins::Google::Config do
           "one" => "foo",
           "two" => "bar"
         }
+      end
+    end
+
+    describe "zone_preemptible" do
+      let(:zone) { "hashi-zone" }
+      subject do
+        instance.zone = zone
+        instance.zone_config zone do |config|
+          config.preemptible = true
+          config.auto_restart = true
+          config.on_host_maintenance = "MIGRATE"
+        end
+
+        instance.tap do |o|
+          o.finalize!
+        end
+      end
+
+      it "should fail auto_restart validation" do
+        expected_error = "en.vagrant_google.config.auto_restart_invalid_on_preemptible"
+        errors = subject.validate("foo")["Google Provider"]
+        errors.inject(false) { |a, e| a or e.include?(expected_error) }.should == true
+      end
+
+      it "should fail on_host_maintenance validation" do
+        expected_error = "en.vagrant_google.config.on_host_maintenance_invalid_on_preemptible"
+        errors = subject.validate("foo")["Google Provider"]
+        errors.inject(false) { |a, e| a or e.include?(expected_error) }.should == true
       end
     end
   end

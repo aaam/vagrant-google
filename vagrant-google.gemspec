@@ -1,26 +1,26 @@
 # Copyright 2013 Google Inc. All Rights Reserved.
-# 
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
-# 
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-$:.unshift File.expand_path("../lib", __FILE__)
+$LOAD_PATH.unshift File.expand_path("../lib", __FILE__)
 require "vagrant-google/version"
 
 Gem::Specification.new do |s|
   s.name          = "vagrant-google"
   s.version       = VagrantPlugins::Google::VERSION
   s.platform      = Gem::Platform::RUBY
-  s.authors       = "Eric Johnson"
-  s.email         = "erjohnso@google.com"
+  s.authors       = ["Eric Johnson", "Artem Yakimenko"]
+  s.email         = "vagrant-google@google.com"
   s.homepage      = "http://www.vagrantup.com"
   s.summary       = "Vagrant provider plugin for Google Compute Engine."
   s.description   = "Enables Vagrant to manage Google Compute Engine instances."
@@ -28,16 +28,15 @@ Gem::Specification.new do |s|
   s.required_rubygems_version = ">= 1.3.6"
   s.rubyforge_project         = "vagrant-google"
 
-  s.add_runtime_dependency "fog", "1.22"
+  s.add_runtime_dependency "fog-google", "~> 0.0.7"
   s.add_runtime_dependency "google-api-client"
   #s.add_runtime_dependency "pry"
-  #s.add_runtime_dependency "pry-nav"
+  #s.add_runtime_dependency "pry-byebug"
   #s.add_runtime_dependency "rb-readline"
 
   s.add_development_dependency "rake"
-  s.add_development_dependency "rspec-core", "~> 2.12.2"
-  s.add_development_dependency "rspec-expectations", "~> 2.12.1"
-  s.add_development_dependency "rspec-mocks", "~> 2.12.1"
+  s.add_development_dependency "rspec", "~> 2.14.0"
+  s.add_development_dependency "rubocop", "0.31.0"
 
   # The following block of code determines the files that should be included
   # in the gem. It does this by reading all the files in the directory where

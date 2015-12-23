@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 require "vagrant"
+require "securerandom"
 
 module VagrantPlugins
   module Google
@@ -25,6 +26,11 @@ module VagrantPlugins
       #
       # @return [String]
       attr_accessor :google_key_location
+
+      # The path to the Service Account json-formatted private key
+      #
+      # @return [String]
+      attr_accessor :google_json_key_location
 
       # The Google Cloud Project ID (not name or number)
       #
@@ -51,6 +57,11 @@ module VagrantPlugins
       # @return [String]
       attr_accessor :disk_name
 
+      # The type of the disk to be used, such as "pd-standard"
+      #
+      # @return [String]
+      attr_accessor :disk_type
+
       # The user metadata string
       #
       # @return [Hash<String, String>]
@@ -71,7 +82,7 @@ module VagrantPlugins
       # @return [Array]
       attr_accessor :tags
 
-      # wether to enable ip forwarding
+      # whether to enable ip forwarding
       #
       # @return Boolean
       attr_accessor :can_ip_forward
@@ -81,21 +92,35 @@ module VagrantPlugins
       # @return String
       attr_accessor :external_ip
 
-      # wether to autodelete disk on instance delete
+      # whether to autodelete disk on instance delete
       #
       # @return Boolean
       attr_accessor :autodelete_disk
+
+      # Availability policy
+      # whether to run instance as preemptible
+      #
+      # @return Boolean
+      attr_accessor :preemptible
+
+      # Availability policy
+      # whether to have instance restart on failures
+      #
+      # @return Boolean
+      attr_accessor :auto_restart
+
+      # Availability policy
+      # specify what to do when infrastructure maintenance events occur
+      # Options: MIGRATE, TERMINATE
+      # The default is MIGRATE.
+      #
+      # @return String
+      attr_accessor :on_host_maintenance
 
       # The timeout value waiting for instance ready
       #
       # @return [Int]
       attr_accessor :instance_ready_timeout
-
-      # The tags for the machine.
-      # TODO(erjohnso): not supported in fog
-      #
-      # @return [Hash<String, String>]
-      #attr_accessor :tags
 
       # The zone to launch the instance into. If nil, it will
       # use the default us-central1-f.
@@ -103,14 +128,23 @@ module VagrantPlugins
       # @return [String]
       attr_accessor :zone
 
+      # The list of access controls for service accounts.
+      #
+      # @return [Array]
+      attr_accessor :service_accounts
+      alias_method :scopes, :service_accounts
+      alias_method :scopes=, :service_accounts=
+
       def initialize(zone_specific=false)
         @google_client_email = UNSET_VALUE
         @google_key_location = UNSET_VALUE
+        @google_json_key_location = UNSET_VALUE
         @google_project_id   = UNSET_VALUE
         @image               = UNSET_VALUE
         @machine_type        = UNSET_VALUE
         @disk_size           = UNSET_VALUE
         @disk_name           = UNSET_VALUE
+        @disk_type           = UNSET_VALUE
         @metadata            = {}
         @name                = UNSET_VALUE
         @network             = UNSET_VALUE
@@ -118,8 +152,12 @@ module VagrantPlugins
         @can_ip_forward      = UNSET_VALUE
         @external_ip         = UNSET_VALUE
         @autodelete_disk     = UNSET_VALUE
+        @preemptible         = UNSET_VALUE
+        @auto_restart        = UNSET_VALUE
+        @on_host_maintenance = UNSET_VALUE
         @instance_ready_timeout = UNSET_VALUE
         @zone                = UNSET_VALUE
+        @service_accounts    = UNSET_VALUE
 
         # Internal state (prefix with __ so they aren't automatically
         # merged)
@@ -194,6 +232,7 @@ module VagrantPlugins
         # will default to nil if the environment variables are not present.
         @google_client_email = ENV['GOOGLE_CLIENT_EMAIL'] if @google_client_email == UNSET_VALUE
         @google_key_location = ENV['GOOGLE_KEY_LOCATION'] if @google_key_location == UNSET_VALUE
+        @google_json_key_location = ENV['GOOGLE_JSON_KEY_LOCATION'] if @google_json_key_location == UNSET_VALUE
         @google_project_id   = ENV['GOOGLE_PROJECT_ID'] if @google_project_id == UNSET_VALUE
 
         # Image must be nil, since we can't default that
@@ -208,16 +247,21 @@ module VagrantPlugins
         # Default disk name is nil
         @disk_name = nil if @disk_name == UNSET_VALUE
 
-        # Instance name defaults to a new datetime value (hour granularity)
-        t = Time.now
-        @name = "i-#{t.year}#{t.month.to_s.rjust(2,'0')}#{t.day.to_s.rjust(2,'0')}#{t.hour.to_s.rjust(2,'0')}" if @name == UNSET_VALUE
+        # Default disk type is pd-standard
+        @disk_type = "pd-standard" if @disk_type == UNSET_VALUE
 
+        # Instance name defaults to a new datetime value + random seed
+        # e.g. i-2015081013-15637fdb
+        if @name == UNSET_VALUE
+          t = Time.now
+          @name = "i-#{t.strftime("%Y%m%d%H")}-" + SecureRandom.hex(4)
+        end
         # Network defaults to 'default'
         @network = "default" if @network == UNSET_VALUE
 
         # Default zone is us-central1-f.
         @zone = "us-central1-f" if @zone == UNSET_VALUE
-        
+
         # autodelete_disk defaults to true
         @autodelete_disk = true if @autodelete_disk == UNSET_VALUE
 
@@ -227,12 +271,24 @@ module VagrantPlugins
         # external_ip defaults to nil
         @external_ip = nil if @external_ip == UNSET_VALUE
 
+        # preemptible defaults to false
+        @preemptible = false if @preemptible == UNSET_VALUE
+
+        # auto_restart defaults to true
+        @auto_restart = true if @auto_restart == UNSET_VALUE
+
+        # on_host_maintenance defaults to MIGRATE
+        @on_host_maintenance = "MIGRATE" if @on_host_maintenance == UNSET_VALUE
+
         # Default instance_ready_timeout
         @instance_ready_timeout = 20 if @instance_ready_timeout == UNSET_VALUE
 
+        # Default service_accounts
+        @service_accounts = nil if @service_accounts == UNSET_VALUE
+
         # Compile our zone specific configurations only within
         # NON-zone-SPECIFIC configurations.
-        if !@__zone_specific
+        unless @__zone_specific
           @__zone_config.each do |zone, blocks|
             config = self.class.new(true).merge(self)
 
@@ -267,8 +323,20 @@ module VagrantPlugins
             config.google_project_id.nil?
           errors << I18n.t("vagrant_google.config.google_client_email_required") if \
             config.google_client_email.nil?
+          errors << I18n.t("vagrant_google.config.google_duplicate_key_location") if \
+            !config.google_key_location.nil? and !config.google_json_key_location.nil?
           errors << I18n.t("vagrant_google.config.google_key_location_required") if \
-            config.google_key_location.nil?
+            config.google_key_location.nil? and config.google_json_key_location.nil?
+          errors << I18n.t("vagrant_google.config.private_key_missing") unless \
+            File.exist?(config.google_key_location.to_s) or \
+            File.exist?(config.google_json_key_location.to_s)
+
+          if config.preemptible
+            errors << I18n.t("vagrant_google.config.auto_restart_invalid_on_preemptible") if \
+             config.auto_restart
+            errors << I18n.t("vagrant_google.config.on_host_maintenance_invalid_on_preemptible") unless \
+             config.on_host_maintenance == "TERMINATE"
+          end
         end
 
         errors << I18n.t("vagrant_google.config.image_required") if config.image.nil?
@@ -280,7 +348,7 @@ module VagrantPlugins
       # This gets the configuration for a specific zone. It shouldn't
       # be called by the general public and is only used internally.
       def get_zone_config(name)
-        if !@__finalized
+        unless @__finalized
           raise "Configuration must be finalized before calling this method."
         end
 

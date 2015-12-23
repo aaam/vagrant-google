@@ -1,4 +1,4 @@
-# Copyright 2013 Google Inc. All Rights Reserved.
+# Copyright 2015 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,17 +14,15 @@
 module VagrantPlugins
   module Google
     module Action
-      class WarnNetworks
+      # This can be used with "Call" built-in to check if the machine
+      # is stopped and branch in the middleware.
+      class IsTerminated
         def initialize(app, env)
           @app = app
         end
 
         def call(env)
-          # Default SSH forward always exists so "> 1"
-          if env[:machine].config.vm.networks.length > 1
-            env[:ui].warn(I18n.t("vagrant_google.warn_networks"))
-          end
-
+          env[:result] = env[:machine].state.id == :TERMINATED
           @app.call(env)
         end
       end

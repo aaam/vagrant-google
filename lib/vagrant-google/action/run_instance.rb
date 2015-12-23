@@ -22,6 +22,12 @@ module VagrantPlugins
       class RunInstance
         include Vagrant::Util::Retryable
 
+        FOG_ERRORS = [
+          Fog::Compute::Google::NotFound,
+          Fog::Compute::Google::Error,
+          Fog::Errors::Error
+        ]
+
         def initialize(app, env)
           @app    = app
           @logger = Log4r::Logger.new("vagrant_google::action::run_instance")
@@ -35,23 +41,29 @@ module VagrantPlugins
           zone = env[:machine].provider_config.zone
 
           # Get the configs
-          zone_config        = env[:machine].provider_config.get_zone_config(zone)
-          image              = zone_config.image
-          name               = zone_config.name
-          machine_type       = zone_config.machine_type
-          disk_size          = zone_config.disk_size
-          disk_name          = zone_config.disk_name
-          network            = zone_config.network
-          metadata           = zone_config.metadata
-          tags               = zone_config.tags
-          can_ip_forward     = zone_config.can_ip_forward
-          external_ip        = zone_config.external_ip
-          autodelete_disk    = zone_config.autodelete_disk
+          zone_config         = env[:machine].provider_config.get_zone_config(zone)
+          image               = zone_config.image
+          name                = zone_config.name
+          machine_type        = zone_config.machine_type
+          disk_size           = zone_config.disk_size
+          disk_name           = zone_config.disk_name
+          disk_type           = zone_config.disk_type
+          network             = zone_config.network
+          metadata            = zone_config.metadata
+          tags                = zone_config.tags
+          can_ip_forward      = zone_config.can_ip_forward
+          external_ip         = zone_config.external_ip
+          preemptible         = zone_config.preemptible
+          auto_restart        = zone_config.auto_restart
+          on_host_maintenance = zone_config.on_host_maintenance
+          autodelete_disk     = zone_config.autodelete_disk
+          service_accounts    = zone_config.service_accounts
 
           # Launch!
           env[:ui].info(I18n.t("vagrant_google.launching_instance"))
           env[:ui].info(" -- Name:            #{name}")
           env[:ui].info(" -- Type:            #{machine_type}")
+          env[:ui].info(" -- Disk type:       #{disk_type}")
           env[:ui].info(" -- Disk size:       #{disk_size} GB")
           env[:ui].info(" -- Disk name:       #{disk_name}")
           env[:ui].info(" -- Image:           #{image}")
@@ -61,27 +73,30 @@ module VagrantPlugins
           env[:ui].info(" -- Tags:            '#{tags}'")
           env[:ui].info(" -- IP Forward:      #{can_ip_forward}")
           env[:ui].info(" -- External IP:     #{external_ip}")
+          env[:ui].info(" -- Preemptible:     #{preemptible}")
+          env[:ui].info(" -- Auto Restart:    #{auto_restart}")
+          env[:ui].info(" -- On Maintenance:  #{on_host_maintenance}")
           env[:ui].info(" -- Autodelete Disk: #{autodelete_disk}")
+          env[:ui].info(" -- Scopes:          #{service_accounts}")
           begin
-            request_start_time = Time.now().to_i
-            # TODO: check if external IP is available
-            if !external_ip.nil?
-              address = env[:google_compute].addresses.get_by_ip_address(external_ip)
-              if !address.nil?
-                if address.in_use?
-                  env[:ui].error("Specified external_ip is already in use, cannot be used!")
-                  raise Errors::VagrantGoogleError, "Specified external_ip is already in use, cannot be used!"
-                end
-              end
-            end
+            request_start_time = Time.now.to_i
+
+            # Check if specified external ip is available
+            external_ip = get_external_ip(env, external_ip) if external_ip
+            # Check if disk type is available in the zone and set the proper resource link
+            disk_type = get_disk_type(env, disk_type, zone)
+
+            disk_created_by_vagrant = false
             if disk_name.nil?
               # no disk_name... disk_name defaults to instance name
               disk = env[:google_compute].disks.create(
                   name: name,
                   size_gb: disk_size,
+                  type: disk_type,
                   zone_name: zone,
                   source_image: image
               )
+              disk_created_by_vagrant = true
               disk.wait_for { disk.ready? }
             else
               disk = env[:google_compute].disks.get(disk_name, zone)
@@ -90,31 +105,42 @@ module VagrantPlugins
                 disk = env[:google_compute].disks.create(
                     name: disk_name,
                     size_gb: disk_size,
+                    type: disk_type,
                     zone_name: zone,
                     source_image: image
                 )
+                disk_created_by_vagrant = true
                 disk.wait_for { disk.ready? }
               end
             end
 
             defaults = {
-              :name               => name,
-              :zone_name          => zone,
-              :machine_type       => machine_type,
-              :disk_size          => disk_size,
-              :image              => image,
-              :network            => network,
-              :metadata           => metadata,
-              :tags               => tags,
-              :can_ip_forward     => can_ip_forward,
-              :external_ip        => external_ip,
-              :disks              => [disk.get_as_boot_disk(true, autodelete_disk)],
+              :name                => name,
+              :zone_name           => zone,
+              :machine_type        => machine_type,
+              :disk_size           => disk_size,
+              :disk_type           => disk_type,
+              :image               => image,
+              :network             => network,
+              :metadata            => metadata,
+              :tags                => tags,
+              :can_ip_forward      => can_ip_forward,
+              :external_ip         => external_ip,
+              :preemptible         => preemptible,
+              :auto_restart        => auto_restart,
+              :on_host_maintenance => on_host_maintenance,
+              :disks               => [disk.get_as_boot_disk(true, autodelete_disk)],
+              :service_accounts    => service_accounts
             }
             server = env[:google_compute].servers.create(defaults)
             @logger.info("Machine '#{zone}:#{name}' created.")
-          rescue Fog::Compute::Google::NotFound => e
-            raise
-          rescue Fog::Compute::Google::Error => e
+          rescue *FOG_ERRORS => e
+            # there is a chance Google responded with error but actually created
+            # instance, so we need to remove it
+            cleanup_instance(env)
+            # there is a chance Google has failed to create instance, so we need
+            # to remove created disk
+            cleanup_disk(disk.name, env) if disk && disk_created_by_vagrant
             raise Errors::FogError, :message => e.message
           end
 
@@ -125,14 +151,14 @@ module VagrantPlugins
           env[:ui].info(I18n.t("vagrant_google.waiting_for_ready"))
           begin
             server.wait_for { ready? }
-            env[:metrics]["instance_ready_time"] = Time.now().to_i - request_start_time
+            env[:metrics]["instance_ready_time"] = Time.now.to_i - request_start_time
             @logger.info("Time for instance ready: #{env[:metrics]["instance_ready_time"]}")
             env[:ui].info(I18n.t("vagrant_google.ready"))
           rescue
             env[:interrupted] = true
           end
 
-          if !env[:terminated]
+          unless env[:terminated]
             env[:metrics]["instance_ssh_time"] = Util::Timer.time do
               # Wait for SSH to be ready.
               env[:ui].info(I18n.t("vagrant_google.waiting_for_ssh"))
@@ -168,6 +194,47 @@ module VagrantPlugins
           destroy_env[:config_validate] = false
           destroy_env[:force_confirm_destroy] = true
           env[:action_runner].run(Action.action_destroy, destroy_env)
+        end
+
+        def get_disk_type(env, disk_type, zone)
+          begin
+            # TODO(temikus): Outsource parsing logic to fog-google
+            disk_type=env[:google_compute].get_disk_type(disk_type, zone).body["selfLink"]
+          rescue Fog::Errors::NotFound
+            raise Errors::DiskTypeError,
+                  :disktype => disk_type
+          end
+          disk_type
+        end
+
+        def get_external_ip(env, external_ip)
+          address = env[:google_compute].addresses.get_by_ip_address_or_name(external_ip)
+          if address.nil?
+            raise Errors::ExternalIpDoesNotExistError,
+                  :externalip => external_ip
+          end
+          if address.in_use?
+            raise Errors::ExternalIpInUseError,
+                  :externalip => external_ip
+          end
+          # Resolve the name to IP address
+          address.address
+        end
+
+        def cleanup_instance(env)
+          zone = env[:machine].provider_config.zone
+          zone_config = env[:machine].provider_config.get_zone_config(zone)
+          server = env[:google_compute].servers.get(zone_config.name, zone)
+          server.destroy(false) if server
+        end
+
+        def cleanup_disk(disk_name, env)
+          zone = env[:machine].provider_config.zone
+          autodelete_disk = env[:machine].provider_config.get_zone_config(zone).autodelete_disk
+          if autodelete_disk
+            disk = env[:google_compute].disks.get(disk_name, zone)
+            disk.destroy(false) if disk
+          end
         end
       end
     end

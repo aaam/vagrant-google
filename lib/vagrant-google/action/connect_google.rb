@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-require "fog"
+require "fog/google"
 require "log4r"
 
 module VagrantPlugins
@@ -29,13 +29,17 @@ module VagrantPlugins
         def call(env)
           provider_config = env[:machine].provider_config
 
-          # Build the fog config
+          # Build fog config
           fog_config = {
             :provider            => :google,
             :google_project      => provider_config.google_project_id,
-            :google_client_email => provider_config.google_client_email,
-            :google_key_location => provider_config.google_key_location
+            :google_client_email => provider_config.google_client_email
           }
+          if provider_config.google_json_key_location.nil?
+            fog_config[:google_key_location] = provider_config.google_key_location
+          else
+            fog_config[:google_json_key_location] = provider_config.google_json_key_location
+          end
 
           @logger.info("Connecting to Google...")
           env[:google_compute] = Fog::Compute.new(fog_config)

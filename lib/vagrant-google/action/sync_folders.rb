@@ -14,6 +14,7 @@
 require "log4r"
 require "vagrant/util/subprocess"
 require "vagrant/util/scoped_hash_override"
+require "vagrant/util/which"
 
 module VagrantPlugins
   module Google
@@ -39,6 +40,11 @@ module VagrantPlugins
             # Ignore disabled shared folders
             next if data[:disabled]
 
+            unless Vagrant::Util::Which.which('rsync')
+              env[:ui].warn(I18n.t('vagrant_google.rsync_not_found_warning'))
+              break
+            end
+
             hostpath  = File.expand_path(data[:hostpath], env[:root_path])
             guestpath = data[:guestpath]
 
@@ -46,9 +52,14 @@ module VagrantPlugins
             # avoid creating an additional directory with rsync
             hostpath = "#{hostpath}/" if hostpath !~ /\/$/
 
+            # on windows rsync.exe requires cygdrive-style paths
+            if Vagrant::Util::Platform.windows?
+              hostpath = hostpath.gsub(/^(\w):/) { "/cygdrive/#{$1}" }
+            end
+
             env[:ui].info(I18n.t("vagrant_google.rsync_folder",
-                                :hostpath => hostpath,
-                                :guestpath => guestpath))
+                                 :hostpath => hostpath,
+                                 :guestpath => guestpath))
 
             # Create the guest path
             env[:machine].communicate.sudo("mkdir -p '#{guestpath}'")
@@ -67,17 +78,23 @@ module VagrantPlugins
             # Rsync over to the guest path using the SSH info
             command = [
               "rsync", "--verbose", "--archive", "-z",
-              *excludes.map{|e|['--exclude', e]}.flatten,
+              *excludes.map{|e| ['--exclude', e]}.flatten,
               "-e", "ssh -p #{ssh_info[:port]} -o StrictHostKeyChecking=no #{ssh_key_options(ssh_info)}",
               hostpath,
               "#{ssh_info[:username]}@#{ssh_info[:host]}:#{guestpath}"]
 
+            # we need to fix permissions when using rsync.exe on windows, see
+            # http://stackoverflow.com/questions/5798807/rsync-permission-denied-created-directories-have-no-permissions
+            if Vagrant::Util::Platform.windows?
+              command.insert(1, "--chmod", "ugo=rwX")
+            end
+
             r = Vagrant::Util::Subprocess.execute(*command)
             if r.exit_code != 0
               raise Errors::RsyncError,
-                :guestpath => guestpath,
-                :hostpath => hostpath,
-                :stderr => r.stderr
+                    :guestpath => guestpath,
+                    :hostpath => hostpath,
+                    :stderr => r.stderr
             end
           end
         end

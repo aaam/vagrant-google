@@ -1,4 +1,4 @@
-# Copyright 2013 Google Inc. All Rights Reserved.
+# Copyright 2015 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,15 +14,15 @@
 module VagrantPlugins
   module Google
     module Action
-      class WarnNetworks
+      class WarnSshKeys
         def initialize(app, env)
           @app = app
         end
 
         def call(env)
-          # Default SSH forward always exists so "> 1"
-          if env[:machine].config.vm.networks.length > 1
-            env[:ui].warn(I18n.t("vagrant_google.warn_networks"))
+          # Warn on ssh-key overrides
+          if env[:machine].config.ssh.username.nil?
+            env[:ui].warn(I18n.t("vagrant_google.warn_ssh_vagrant_user"))
           end
 
           @app.call(env)

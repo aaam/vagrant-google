@@ -20,8 +20,24 @@ module VagrantPlugins
         error_namespace("vagrant_google.errors")
       end
 
+      class DiskTypeError < VagrantGoogleError
+        error_key(:disk_type_error)
+      end
+
       class FogError < VagrantGoogleError
         error_key(:fog_error)
+      end
+
+      class ExternalIpInUseError < VagrantGoogleError
+        error_key(:external_ip_error)
+      end
+
+      class ExternalIpDoesNotExistError < VagrantGoogleError
+        error_key(:external_ip_does_not_exist_error)
+      end
+
+      class InstanceReadyTimeout < VagrantGoogleError
+        error_key(:instance_ready_timeout)
       end
 
       class RsyncError < VagrantGoogleError

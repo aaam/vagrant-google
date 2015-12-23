@@ -2,21 +2,25 @@ en:
   vagrant_google:
     already_created: |-
       The machine is already created.
+    already_status: |-
+      The machine is already in %{status} status.
     launching_instance: |-
       Launching an instance with the following settings...
-    launch_vpc_warning: |-
-      Warning! You're launching this instance into a VPC without an
-      elastic IP. Please verify you're properly connected to a VPN so
-      you can access this machine, otherwise Vagrant will not be able
-      to SSH into it.
     not_created: |-
       Instance is not created. Please run `vagrant up` first.
     ready: |-
       Machine is booted and ready for use!
     ready_ssh: |-
       Machine is ready for SSH access!
+    rsync_not_found_warning: |-
+      Warning! Folder sync disabled because the rsync binary is missing.
+      Make sure rsync is installed and the binary can be found in the PATH.
     rsync_folder: |-
       Rsyncing folder: %{hostpath} => %{guestpath}
+    starting: |-
+      Starting the instance...
+    stopping: |-
+      Stopping the instance...
     terminating: |-
       Terminating the instance...
     waiting_for_ready: |-
@@ -27,26 +31,50 @@ en:
       Warning! The Google provider doesn't support any of the Vagrant
       high-level network configurations (`config.vm.network`). They
       will be silently ignored.
+    warn_ssh_vagrant_user: |-
+      Warning! SSH credentials are not set (`ssh.username`, `ssh.private_key`).
+      Unless Vagrant's default insecure private key is added to GCE metadata,
+      "vagrant up" will timeout while trying to estabilish an ssh connection
+      to the instance.
+      NOTE! Adding Vagrant private key to GCE metadata is heavily discouraged,
+      since it potentially allows anyone to connect to your instances,
+      including those not managed by Vagrant.
     will_not_destroy: |-
       The instance '%{name}' will not be destroyed, since the confirmation
       was declined.
-
+#-------------------------------------------------------------------------------
+# Translations for config validation errors
+#-------------------------------------------------------------------------------
     config:
       google_client_email_required: |-
-        A Google Service Account client email is required via "google_client_email"
-      machine_required: |-
-        An MACHINE_TYPE must be configured via "machine"
+        A Google Service Account client email is required via
+        "google_client_email".
       private_key_missing: |-
-        The specified private key for Google could not be found
+        Private key for Google could not be found in the specified location.
       zone_required: |-
-        A zone must be specified via "zone"
+        A zone must be specified via "zone" option.
       name_required: |-
-        An instance name must be specified via "name"
+        An instance name must be specified via "name" option.
+      image_required: |-
+        An image must be specified via "image" option.
       google_key_location_required: |-
-        A private key pathname is required via "google_key_location"
+        A private key pathname is required via:
+         "google_json_key_location" (for JSON keys)
+         or
+         "google_key_location" (for P12 keys)
+      google_duplicate_key_location: |-
+        Both "google_json_key_location" and "google_key_location" are specified.
+        Config must specify only one key location.
       google_project_id_required: |-
-        A Google Cloud Project ID is required via "google_project_id"
-
+        A Google Cloud Project ID is required via "google_project_id".
+      auto_restart_invalid_on_preemptible: |-
+        "auto_restart" option must be set to "false" for preemptible instances.
+      on_host_maintenance_invalid_on_preemptible: |-
+        "on_host_maintenance" option must be set to "TERMINATE" for preemptible
+        instances.
+#-------------------------------------------------------------------------------
+# Translations for exception classes
+#-------------------------------------------------------------------------------
     errors:
       fog_error: |-
         There was an error talking to Google. The error message is shown
@@ -65,7 +93,18 @@ en:
         Host path: %{hostpath}
         Guest path: %{guestpath}
         Error: %{stderr}
-
+      external_ip_error: |-
+        Specified external IP address is already in use.
+        IP address requested: %{externalip}
+      external_ip_does_not_exist_error: |-
+        Specified external IP address is invalid or does not exist.
+        IP address requested: %{externalip}
+      disk_type_error: |-
+        Specified disk type is not available in the region selected.
+        Disk type requested: %{disktype}
+#-------------------------------------------------------------------------------
+# Translations for machine states
+#-------------------------------------------------------------------------------
     states:
       short_not_created: |-
         not created
@@ -84,6 +123,12 @@ en:
         Resources have been acquired and the instance is being prepared for
         launch and should be in the RUNNING state soon.
 
+      short_STOPPING: |-
+        stopping
+      long_STOPPING: |-
+        The GCE instance is stopping. Wait until is completely stopped to
+        run `vagrant up` and start it.
+
       short_RUNNING: |-
         running
       long_RUNNING: |-
@@ -100,6 +145,5 @@ en:
       short_TERMINATED: |-
         terminated
       long_TERMINATED: |-
-        The Google instance failed for some reason or was shutdown.  This is
-        a permanent status, and the only way to repair the instance is to
-        delete it with `vagrant destroy`.
+        The Google instance was halted or failed for some reason. You can
+        attempt to restart the instance by running `vagrant up`.

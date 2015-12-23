@@ -1,3 +1,5 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
 # Copyright 2013 Google Inc. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,23 +13,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-module VagrantPlugins
-  module Google
-    module Action
-      class WarnNetworks
-        def initialize(app, env)
-          @app = app
-        end
 
-        def call(env)
-          # Default SSH forward always exists so "> 1"
-          if env[:machine].config.vm.networks.length > 1
-            env[:ui].warn(I18n.t("vagrant_google.warn_networks"))
-          end
+Vagrant.configure("2") do |config|
+  config.vm.provider :google do |google, override|
 
-          @app.call(env)
-        end
-      end
+    if ENV['GOOGLE_SSH_USER'] and ENV['GOOGLE_SSH_KEY_LOCATION']
+      override.ssh.username = ENV['GOOGLE_SSH_USER']
+      override.ssh.private_key_path = ENV['GOOGLE_SSH_KEY_LOCATION']
     end
+
+    google.image = "debian-7-wheezy-v20150127"
+    google.machine_type = "n1-standard-1"
+    google.zone = "us-central1-f"
+
   end
 end
